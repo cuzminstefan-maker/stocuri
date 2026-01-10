@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Stoc Farma Pro v6 - Audit & Jurnal</title>
+    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+
+    <style>
+        :root {
+            --primary: #0f172a; --accent: #3b82f6; --success: #10b981; --danger: #ef4444;
+            --bg: #f8fafc; --border: #e2e8f0; --st-expirat: #fee2e2;
+        }
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; outline: none; }
+        body { font-family: 'Inter', system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--primary); }
+        
+        .top-bar { 
+            background: var(--primary); color: white; padding: 12px 16px; 
+            display: flex; justify-content: space-between; align-items: center; 
+            position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+
+        .main-container { padding: 12px; max-width: 1400px; margin: auto; }
+        .controls { display: flex; gap: 8px; margin-bottom: 8px; overflow-x: auto; padding-bottom: 8px; scrollbar-width: none; }
+        .controls::-webkit-scrollbar { display: none; }
+
+        .btn { padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: 0.8rem; border: 1px solid var(--border); cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 6px; min-height: 42px; transition: 0.2s; }
+        .btn-blue { background: var(--accent); color: white; border: none; }
+        .btn-white { background: white; color: var(--primary); }
+        .btn-danger { background: var(--danger); color: white; border: none; }
+
+        .btn-delete { 
+            background: #fff1f2; color: #be123c; border: 1px solid #fda4af; 
+            padding: 8px 12px; border-radius: 8px; font-weight: bold; cursor: pointer;
+        }
+
+        .search-box { width: 100%; padding: 14px; border: 2px solid var(--border); border-radius: 12px; font-size: 1rem; margin-bottom: 10px; }
+        
+        .stats-bar { display: flex; justify-content: space-between; align-items: center; padding: 0 5px 10px; font-size: 0.85rem; color: #64748b; }
+
+        .table-card { background: white; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .table-responsive { width: 100%; overflow-x: auto; max-height: 70vh; }
+        
+        table { width: 100%; border-collapse: collapse; min-width: 900px; table-layout: fixed; }
+        th { background: #f8fafc; padding: 14px; text-align: left; font-size: 0.75rem; text-transform: uppercase; color: #64748b; border-bottom: 2px solid var(--border); position: sticky; top: 0; z-index: 10; cursor: pointer; }
+        td { padding: 12px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+        
+        .input-inline { border: 1px solid transparent; background: transparent; padding: 8px; width: 100%; border-radius: 6px; font-size: 0.95rem; }
+        .input-inline:focus { background: #f8fafc; border-color: var(--accent); }
+        .qty-box { width: 65px; border: 1.5px solid #e2e8f0; border-radius: 6px; padding: 8px; text-align: center; font-weight: 800; }
+        
+        .row-expirat { background-color: #fff1f2 !important; }
+    </style>
+</head>
+<body>
+
+<div class="top-bar">
+    <h1 style="font-size: 0.9rem; margin:0; font-weight: 800;">STOC FARMA PRO</h1>
+    <button class="btn btn-white" style="background:#4f46e5; color:white; border:none;" onclick="toggleModInventar()">MOD INVENTAR</button>
+</div>
+
+<div class="main-container">
+    <div id="normalControls" class="controls">
+        <button class="btn btn-blue" onclick="adaugaProdusNou()">+ PRODUS</button>
+        <button class="btn btn-white" onclick="document.getElementById('excelInput').click()">📥 IMPORT</button>
+        <button class="btn btn-white" onclick="creeazaBackup()">💾 BACKUP</button>
+        <button class="btn btn-white" onclick="document.getElementById('restoreInput').click()">🔄 RESTORE</button>
+        <button class="btn btn-white" style="border-color: #f59e0b; color: #d97706;" onclick="exportaIstoricAudit()">📋 JURNAL AUDIT</button>
+        <button class="btn btn-white" style="color: #be123c;" onclick="golesteAudit()">🗑️ GOLIȚI JURNAL</button>
+        
+        <input type="file" id="excelInput" style="display: none;" accept=".xlsx, .xls" onchange="importaExcelInteligent(event)" />
+        <input type="file" id="restoreInput" style="display: none;" accept=".json" onchange="restaurareBackup(event)" />
+    </div>
+
+    <div id="inventarControls" class="controls" style="display: none;">
+        <button class="btn btn-blue" onclick="exportaInventarExcel()">📊 EXCEL RAFT</button>
+        <button class="btn btn-white" onclick="finalizeazaInventar()">📄 PDF</button>
+        <button class="btn btn-danger" onclick="toggleModInventar()">ÎNCHIDE</button>
+    </div>
+
+    <input type="text" id="searchInput" class="search-box" placeholder="🔎 Caută produs..." onkeyup="afiseaza()">
+
+    <div class="stats-bar">
+        <div>
+            <span id="txtTotal">Total: 0</span> | 
+            <span style="color:var(--danger); cursor:pointer" onclick="filtreazaSpeciale('expirate')">🚩 Vezi Expirate</span> |
+            <span style="color:var(--accent); cursor:pointer" onclick="afiseaza()">🔄 Toate</span>
+        </div>
+    </div>
+
+    <div class="table-card">
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr id="tableHeader"></tr>
+                </thead>
+                <tbody id="listaCorp"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    const db = new Dexie("FarmaProDB_V6");
+    db.version(1).stores({ 
+        produse: '++id, nume, cantitateInt, cantitateFrac, ambalaj, dataExpirare, ordine',
+        istoric_verificari: '++id, nume, stocText, dataAudit'
+    });
+
+    let modInventar = false;
+    let sensSortare = { nume: 1, dataExpirare: 1 };
+    let inventarFaptic = {};
+
+    async function afiseaza(dateSursa = null) {
+        const query = document.getElementById('searchInput').value.toLowerCase().trim();
+        const corp = document.getElementById('listaCorp');
+        const header = document.getElementById('tableHeader');
+        const azi = new Date();
+
+        let date = dateSursa || await db.produse.orderBy('ordine').reverse().toArray();
+        if (query && !dateSursa) date = date.filter(p => p.nume.toLowerCase().includes(query));
+
+        document.getElementById('txtTotal').innerText = `Total: ${date.length} produse`;
+
+        if (modInventar) {
+            header.innerHTML = `<th>Acțiuni</th><th onclick="sorteaza('nume')">Produs ↕️</th><th>Emb.</th><th>Numărat (I/F)</th><th onclick="sorteaza('dataExpirare')">Expira ↕️</th>`;
+        } else {
+            header.innerHTML = `<th style="width:80px">Audit</th><th onclick="sorteaza('nume')">Produs ↕️</th><th>Emb.</th><th>Stoc (I/F)</th><th onclick="sorteaza('dataExpirare')">Expira ↕️</th><th style="width:70px"></th>`;
+        }
+
+        let buffer = "";
+        for (const p of date) {
+            const dExp = parseDataRO(p.dataExpirare);
+            const statusClass = (dExp && dExp < azi) ? 'row-expirat' : '';
+
+            if (modInventar) {
+                buffer += `<tr class="${statusClass}">
+                    <td><button class="btn-white" onclick="duplica(${p.id})">+</button> <button class="btn-delete" style="padding:4px 8px" onclick="sterge(${p.id})">🗑️</button></td>
+                    <td><input class="input-inline" style="font-weight:bold" value="${p.nume}" onchange="updateProd(${p.id}, 'nume', this.value)"></td>
+                    <td align="center">${p.ambalaj}</td>
+                    <td align="center">
+                        <input type="number" class="qty-box" placeholder="I" onchange="updateFaptic(${p.id}, 'int', this.value)">
+                        <input type="number" class="qty-box" style="border-color:var(--accent)" placeholder="F" onchange="updateFaptic(${p.id}, 'frac', this.value)">
+                    </td>
+                    <td><input class="input-inline" style="text-align:center" value="${p.dataExpirare}" placeholder="ZZ/LL/AA" oninput="formatareData(this)" onchange="updateProd(${p.id}, 'dataExpirare', this.value)"></td>
+                </tr>`;
+            } else {
+                buffer += `<tr class="${statusClass}">
+                    <td align="center"><button class="btn-white" style="font-size:1.3rem" onclick="verificaStoc(${p.id})">👁️</button></td>
+                    <td><b>${p.nume}</b></td>
+                    <td align="center">${p.ambalaj}</td>
+                    <td align="center"><b>${p.cantitateInt}i</b> / <span style="color:var(--accent)">${p.cantitateFrac}f</span></td>
+                    <td align="center">${p.dataExpirare || '-'}</td>
+                    <td><button class="btn-delete" style="padding:4px 8px" onclick="sterge(${p.id})">🗑️</button></td>
+                </tr>`;
+            }
+        }
+        corp.innerHTML = buffer;
+    }
+
+    async function verificaStoc(id) {
+        const p = await db.produse.get(id);
+        const stocSistem = (p.cantitateInt * p.ambalaj) + p.cantitateFrac;
+        const faptic = prompt(`📊 AUDIT: ${p.nume}\nSISTEM: ${stocSistem} unități\nRAFT (Unități):`, stocSistem);
+        if (faptic === null) return;
+        const nF = parseInt(faptic) || 0;
+        const dif = nF - stocSistem;
+        if (confirm(`DIFERENȚĂ: ${dif > 0 ? '+' : ''}${dif}\nActualizăm stocul?`)) {
+            await db.produse.update(id, { cantitateInt: Math.floor(nF / p.ambalaj), cantitateFrac: nF % p.ambalaj });
+            await db.istoric_verificari.add({ nume: p.nume, stocText: `S:${stocSistem} | R:${nF} | D:${dif}`, dataAudit: new Date().toLocaleString('ro-RO') });
+            afiseaza();
+        }
+    }
+
+    async function importaExcelInteligent(e) {
+        const f = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+            const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+            const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            for(let row of data) {
+                const fK = (keys) => Object.keys(row).find(k => keys.some(key => k.toLowerCase().includes(key)));
+                await db.produse.add({
+                    nume: (row[fK(['nume','prod','denu','articol'])] || "Fără nume").toString(),
+                    cantitateInt: parseInt(row[fK(['stoc','buc','qty','intreg'])]) || 0,
+                    cantitateFrac: parseInt(row[fK(['frac','tab','fiol'])]) || 0,
+                    ambalaj: parseInt(row[fK(['amb','pack','impach','forma'])]) || 10,
+                    dataExpirare: (row[fK(['exp','data','valab','termen'])] || "").toString(),
+                    ordine: Date.now()
+                });
+            }
+            afiseaza(); alert("Import Finalizat!");
+        };
+        reader.readAsArrayBuffer(f);
+    }
+
+    async function exportaIstoricAudit() {
+        const dateAudit = await db.istoric_verificari.toArray();
+        if (!dateAudit.length) return alert("Jurnal gol!");
+        const ws = XLSX.utils.json_to_sheet(dateAudit);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Audit");
+        XLSX.writeFile(wb, "Jurnal_Audit.xlsx");
+    }
+
+    async function golesteAudit() { if(confirm("Ștergeți tot istoricul audit?")) { await db.istoric_verificari.clear(); alert("Jurnal golit!"); } }
+
+    // UTILS
+    async function sorteaza(camp) {
+        let date = await db.produse.toArray();
+        sensSortare[camp] *= -1;
+        date.sort((a,b) => camp === 'nume' ? a.nume.localeCompare(b.nume)*sensSortare[camp] : (parseDataRO(a.dataExpirare)||new Date(2099,1,1)) - (parseDataRO(b.dataExpirare)||new Date(2099,1,1))*sensSortare[camp]);
+        afiseaza(date);
+    }
+    async function restaurareBackup(e) { 
+        const f = e.target.files[0]; if(!f) return;
+        const reader = new FileReader();
+        reader.onload = async (ev) => { const d = JSON.parse(ev.target.result); await db.produse.clear(); await db.produse.bulkAdd(d); afiseaza(); };
+        reader.readAsText(f);
+    }
+    function formatareData(i) { let v = i.value.replace(/\D/g,''); if(v.length>2) v=v.slice(0,2)+'/'+v.slice(2); if(v.length>5) v=v.slice(0,5)+'/'+v.slice(5,7); i.value=v; }
+    function parseDataRO(s) { if(!s || s.length<8) return null; const p = s.split('/'); return new Date("20"+p[2], p[1]-1, p[0]); }
+    async function adaugaProdusNou() { await db.produse.add({ nume: "Produs Nou", cantitateInt: 0, cantitateFrac: 0, ambalaj: 10, dataExpirare: "", ordine: Date.now() }); afiseaza(); }
+    async function duplica(id) { const p = await db.produse.get(id); delete p.id; p.ordine = Date.now(); await db.produse.add(p); afiseaza(); }
+    async function sterge(id) { if(confirm("Ștergi?")) { await db.produse.delete(id); afiseaza(); } }
+    async function updateProd(id, c, v) { await db.produse.update(id, { [c]: v }); }
+    function updateFaptic(id, t, v) { if(!inventarFaptic[id]) inventarFaptic[id]={int:0, frac:0}; inventarFaptic[id][t]=parseInt(v)||0; }
+    function toggleModInventar() { modInventar = !modInventar; afiseaza(); }
+    function creeazaBackup() { db.produse.toArray().then(d => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(d)], {type:'application/json'})); a.download = `Backup.json`; a.click(); }); }
+    async function filtreazaSpeciale(tip) { const date = await db.produse.toArray(); const azi = new Date(); const f = date.filter(p => { const d = parseDataRO(p.dataExpirare); return d && d < azi; }); afiseaza(f); }
+    async function exportaInventarExcel() {
+        const date = await db.produse.toArray();
+        const randuri = date.map(p => { const f = inventarFaptic[p.id] || {int:0, frac:0}; return { "Produs": p.nume, "Total Sistem": (p.cantitateInt*p.ambalaj)+p.cantitateFrac, "Total Raft": (f.int*p.ambalaj)+f.frac }; });
+        XLSX.writeFile(XLSX.utils.book_new(), "Inventar_Raft.xlsx");
+    }
+    afiseaza();
+</script>
+</body>
+</html>
+
