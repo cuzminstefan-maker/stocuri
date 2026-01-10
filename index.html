@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Stoc Farma Pro - FIX</title>
+    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+
+    <style>
+        :root { --primary: #0f172a; --accent: #3b82f6; --danger: #ef4444; --bg: #f8fafc; --border: #e2e8f0; }
+        body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: var(--bg); color: var(--primary); }
+        .top-bar { background: var(--primary); color: white; padding: 15px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; }
+        .main-container { padding: 15px; max-width: 1200px; margin: auto; }
+        .controls { display: flex; gap: 10px; margin-bottom: 15px; overflow-x: auto; padding-bottom: 5px; }
+        .btn { padding: 10px 16px; border-radius: 8px; font-weight: 700; border: 1px solid var(--border); cursor: pointer; white-space: nowrap; font-size: 0.85rem; }
+        .btn-blue { background: var(--accent); color: white; border: none; }
+        .btn-white { background: white; color: var(--primary); }
+        .btn-delete { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+        .search-box { width: 100%; padding: 15px; border: 2px solid var(--border); border-radius: 12px; font-size: 1rem; margin-bottom: 15px; }
+        .table-card { background: white; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+        .table-responsive { width: 100%; overflow-x: auto; max-height: 65vh; }
+        table { width: 100%; border-collapse: collapse; min-width: 800px; }
+        th { background: #f1f5f9; padding: 12px; text-align: left; font-size: 0.75rem; text-transform: uppercase; color: #64748b; border-bottom: 2px solid var(--border); position: sticky; top: 0; }
+        td { padding: 12px; border-bottom: 1px solid #f1f5f9; }
+        .qty-box { width: 60px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-weight: bold; }
+        .input-inline { border: 1px solid transparent; background: transparent; width: 100%; padding: 5px; font-size: 0.95rem; }
+        .input-inline:focus { background: #f1f5f9; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="top-bar">
+    <h1 style="font-size: 1rem; margin:0;">STOC FARMA PRO</h1>
+    <button class="btn btn-white" onclick="toggleModInventar()" id="btnInv">MOD INVENTAR</button>
+</div>
+
+<div class="main-container">
+    <div id="normalControls" class="controls">
+        <button class="btn btn-blue" onclick="adaugaProdusNou()">+ PRODUS</button>
+        <button class="btn btn-white" onclick="document.getElementById('excelInput').click()">📥 IMPORT EXCEL</button>
+        <button class="btn btn-white" onclick="creeazaBackup()">💾 BACKUP</button>
+        <button class="btn btn-white" onclick="document.getElementById('restoreInput').click()">🔄 RESTORE</button>
+        <button class="btn btn-white" style="color: #d97706;" onclick="exportaIstoricAudit()">📋 JURNAL</button>
+        <input type="file" id="excelInput" style="display: none;" accept=".xlsx, .xls" onchange="importaExcel(event)" />
+        <input type="file" id="restoreInput" style="display: none;" accept=".json" onchange="restaurareBackup(event)" />
+    </div>
+
+    <input type="text" id="searchInput" class="search-box" placeholder="🔎 Caută produs..." onkeyup="afiseaza()">
+
+    <div class="table-card">
+        <div class="table-responsive">
+            <table>
+                <thead id="headPrincipal"></thead>
+                <tbody id="listaCorp"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Inițializare Bază de Date cu nume nou pentru a evita blocajele
+    const db = new Dexie("FarmaPro_FINAL_FIX");
+    db.version(1).stores({ 
+        produse: '++id, nume, cantitateInt, cantitateFrac, ambalaj, dataExpirare, ordine',
+        audit: '++id, nume, info, data'
+    });
+
+    let modInventar = false;
+    let inventarFaptic = {};
+
+    // Deschidere bază de date cu gestionare de erori
+    db.open().catch(err => {
+        alert("Eroare la baza de date. Resetați memoria browserului.");
+        console.error(err);
+    });
+
+    async function afiseaza() {
+        const query = document.getElementById('searchInput').value.toLowerCase();
+        const corp = document.getElementById('listaCorp');
+        const head = document.getElementById('headPrincipal');
+
+        let date = await db.produse.orderBy('ordine').reverse().toArray();
+        if (query) date = date.filter(p => p.nume.toLowerCase().includes(query));
+
+        if (modInventar) {
+            head.innerHTML = `<tr><th>Acțiuni</th><th>Produs</th><th>Numărat (I/F)</th><th>Expira</th></tr>`;
+            corp.innerHTML = date.map(p => `
+                <tr>
+                    <td><button onclick="duplica(${p.id})">+</button></td>
+                    <td><input class="input-inline" value="${p.nume}" onchange="updateProd(${p.id},'nume',this.value)"></td>
+                    <td>
+                        <input type="number" class="qty-box" placeholder="I" onchange="updateInv(${p.id},'int',this.value)">
+                        <input type="number" class="qty-box" placeholder="F" onchange="updateInv(${p.id},'frac',this.value)">
+                    </td>
+                    <td><input class="input-inline" value="${p.dataExpirare}" onchange="updateProd(${p.id},'dataExpirare',this.value)"></td>
+                </tr>`).join('');
+        } else {
+            head.innerHTML = `<tr><th>Audit</th><th>Produs</th><th>Emb.</th><th>Stoc (I/F)</th><th>Expira</th><th></th></tr>`;
+            corp.innerHTML = date.map(p => `
+                <tr>
+                    <td><button onclick="audit(${p.id})">👁️</button></td>
+                    <td><b>${p.nume}</b></td>
+                    <td>${p.ambalaj}</td>
+                    <td>${p.cantitateInt}i / ${p.cantitateFrac}f</td>
+                    <td>${p.dataExpirare}</td>
+                    <td><button class="btn-delete" onclick="sterge(${p.id})">🗑️</button></td>
+                </tr>`).join('');
+        }
+    }
+
+    // --- FUNCȚII BUTOANE ---
+    async function adaugaProdusNou() {
+        try {
+            await db.produse.add({ nume: "Produs Nou", cantitateInt: 0, cantitateFrac: 0, ambalaj: 10, dataExpirare: "", ordine: Date.now() });
+            afiseaza();
+        } catch (e) { alert("Eroare la adăugare!"); }
+    }
+
+    async function audit(id) {
+        const p = await db.produse.get(id);
+        const sist = (p.cantitateInt * p.ambalaj) + p.cantitateFrac;
+        const faptic = prompt(`AUDIT: ${p.nume}\nSistem: ${sist} unități\nIntroduceți stoc raft:`, sist);
+        if (faptic !== null) {
+            const nF = parseInt(faptic) || 0;
+            await db.produse.update(id, { cantitateInt: Math.floor(nF/p.ambalaj), cantitateFrac: nF%p.ambalaj });
+            await db.audit.add({ nume: p.nume, info: `S:${sist} R:${nF} D:${nF-sist}`, data: new Date().toLocaleString() });
+            afiseaza();
+        }
+    }
+
+    async function importaExcel(e) {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+            try {
+                const data = new Uint8Array(ev.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                const json = XLSX.utils.sheet_to_json(sheet);
+                
+                for(let row of json) {
+                    const keys = Object.keys(row);
+                    const getVal = (arr) => row[keys.find(k => arr.some(s => k.toLowerCase().includes(s)))] || "";
+                    
+                    await db.produse.add({
+                        nume: getVal(['nume','prod','denu']).toString(),
+                        cantitateInt: parseInt(getVal(['stoc','buc','cant','qty'])) || 0,
+                        cantitateFrac: 0,
+                        ambalaj: parseInt(getVal(['amb','pack','impach'])) || 10,
+                        dataExpirare: getVal(['exp','data','valab']).toString(),
+                        ordine: Date.now()
+                    });
+                }
+                afiseaza();
+                alert("Import finalizat!");
+            } catch (err) { alert("Fișier invalid!"); }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    // --- ALTE UTILS ---
+    async function sterge(id) { if(confirm("Ștergi produsul?")) { await db.produse.delete(id); afiseaza(); } }
+    async function updateProd(id, c, v) { await db.produse.update(id, { [c]: v }); }
+    function toggleModInventar() { modInventar = !modInventar; document.getElementById('btnInv').innerText = modInventar ? "ÎNCHIDE" : "MOD INVENTAR"; afiseaza(); }
+    async function duplica(id) { const p = await db.produse.get(id); delete p.id; p.ordine = Date.now(); await db.produse.add(p); afiseaza(); }
+    function creeazaBackup() { db.produse.toArray().then(d => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(d)], {type:'application/json'})); a.download="Backup.json"; a.click(); }); }
+    async function restaurareBackup(e) { const f = e.target.files[0]; const r = new FileReader(); r.onload = async (ev) => { const d = JSON.parse(ev.target.result); await db.produse.clear(); await db.produse.bulkAdd(d); afiseaza(); }; r.readAsText(f); }
+    async function exportaIstoricAudit() { const d = await db.audit.toArray(); const ws = XLSX.utils.json_to_sheet(d); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Audit"); XLSX.writeFile(wb, "Audit.xlsx"); }
+
+    afiseaza();
+</script>
+</body>
+</html>
+
